@@ -1,0 +1,384 @@
+// ==========================================
+// DriveScore - Prisma Schema (MongoDB)
+// Covers: Admin flow (Dashboard, Companies, Performance Overview,
+// User Management, Activity Logs, Settings, Auth, Notifications)
+// ==========================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================================
+// ENUMS
+// ===========================================================
+
+// User roles: DRIVER (regular driver), COMPANY (company admin), ADMIN (platform admin)
+enum Role {
+  DRIVER
+  COMPANY
+  ADMIN
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+// Driver-level status shown on driver profile & leaderboard
+enum DriverStatus {
+  ACTIVE
+  INACTIVE
+  ON_LEAVE
+}
+
+// Company status shown in Companies list (Active / Inactive / Suspended)
+enum CompanyStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum OverallStanding {
+  PLATINUM
+  GOLD
+  SILVER
+  BRONZE
+}
+
+// Weekly competition cycle status
+enum WeekStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+}
+
+// Notification types for the Notifications panel
+enum NotificationType {
+  COMPETITION_STARTED  // a new weekly competition started
+  DATA_UPLOADED        // a file was uploaded for a company
+  ACHIEVEMENT          // driver earned a badge
+  COMPANY_REGISTERED   // new company joined the platform
+  USER_DEACTIVATED     // a user was deactivated by admin
+  SYSTEM               // generic system notification
+}
+
+enum MetricCategory {
+  SAFETY
+  QUALITY
+}
+
+enum UploadStatus {
+  PROCESSING
+  SUCCESS
+  FAILED
+}
+
+// ===========================================================
+// COMPOSITE TYPES  (embedded docs — MongoDB only)
+// ===========================================================
+
+// One entry per scoring metric, snapshotted onto a WeeklyScore at calculation time.
+// Weights/names are snapshotted so historical scores are stable even if admin edits the config later.
+type MetricScore {
+  metricId      String         @db.ObjectId
+  name          String         // denormalized, e.g. "Speeding", "Customer Feedback"
+  code          String?        // short col code on leaderboard, e.g. "CSF", "DPMO"
+  category      MetricCategory
+  score         Float          // 0–100 (or metric's configured range)
+  weight        Float          // weight % at calculation time
+  previousScore Float?
+}
+
+// ===========================================================
+// MODELS
+// ===========================================================
+
+// ── Company ─────────────────────────────────────────────────
+// Represents a logistics company registered on the platform.
+// Admin can view, filter (Active / Inactive / Suspended), and manage companies.
+// Shown on: Dashboard stats, Companies list, Performance Overview rankings.
+model Company {
+  id      String        @id @default(auto()) @map("_id") @db.ObjectId
+  code    String?       // display code shown in company list, e.g. "#123678"
+  name    String
+  email   String?       @unique
+  phone   String?
+  country String?       // e.g. "USA" — shown in company list & company details popup
+  location String?      // city / address (more granular than country)
+  logoUrl String?
+  status  CompanyStatus @default(ACTIVE)
+
+  // "Numbers of drivers" from the Add Company form — used as the expected/target count.
+  // Actual driver count is derived from User[] where role=DRIVER.
+  expectedDriverCount Int?
+
+  users          User[]
+  dataUploads    DataUpload[]
+  scoringMetrics ScoringMetric[]
+  weeklyScores   WeeklyScore[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([country])
+}
+
+// ── User ────────────────────────────────────────────────────
+// Covers all three roles: DRIVER, COMPANY (company admin), ADMIN (platform admin).
+// Shown on: User Management list (Name, Role, Company, Email, Status),
+//           User Details popup, Settings → Profile.
+model User {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  email       String  @unique
+  password    String
+  phone       String?
+  photoUrl    String? // Settings → Profile → "Add Profile Photo"
+  associateId String? // driver-specific ID, e.g. "DRV-1024"
+
+  role            Role            @default(DRIVER)
+  status          DriverStatus    @default(ACTIVE) // driver-level status (ACTIVE / INACTIVE / ON_LEAVE)
+  overallStanding OverallStanding @default(BRONZE)
+  joinDate        DateTime        @default(now())
+
+  // Auth fields
+  isEmailVerified Boolean   @default(false)
+  isActive        Boolean   @default(true) // false = deactivated by admin ("Deactivate User" action)
+  lastLogin       DateTime?
+
+  // Company relation — null for ADMIN role
+  companyId String?  @db.ObjectId
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  // Denormalized snapshot for fast leaderboard & list rendering.
+  // Updated each time a new WeeklyScore is calculated for this user.
+  currentSafetyScore  Float?
+  currentQualityScore Float?
+  currentOverallScore Float?
+  currentRank         Int?
+  previousRank        Int?
+
+  weeklyScores     WeeklyScore[]
+  notifications    Notification[]
+  achievements     Achievement[]
+  uploadsPerformed DataUpload[]   @relation("UploadedBy")
+  activityLogs     ActivityLog[]  @relation("TriggeredBy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([role])
+  @@index([isActive])
+  @@index([companyId, status])
+  @@index([companyId, currentOverallScore])
+}
+
+// ── Week (Competition) ───────────────────────────────────────
+// Weekly competition cycle.
+// Dashboard shows "Active Competitions: 40" → count of Week where status=ACTIVE.
+// Performance Overview shows "Active Competitions: 110".
+model Week {
+  id         String     @id @default(auto()) @map("_id") @db.ObjectId
+  weekNumber Int        @unique
+  startDate  DateTime
+  endDate    DateTime
+  status     WeekStatus @default(UPCOMING)
+
+  weeklyScores WeeklyScore[]
+  dataUploads  DataUpload[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// ── ScoringMetric ───────────────────────────────────────────
+// Admin-configurable scoring metric per company (or global template if companyId=null).
+// Shown on: Company → Scoring System → Edit Scoring System (driver/company flow).
+model ScoringMetric {
+  id           String         @id @default(auto()) @map("_id") @db.ObjectId
+  companyId    String?        @db.ObjectId
+  company      Company?       @relation(fields: [companyId], references: [id])
+  category     MetricCategory
+  name         String         // e.g. "Speeding", "Delivery Completion"
+  code         String?        // short column code, e.g. "CSF", "DPMO", "DSB", "POD"
+  description  String?        // e.g. "Speeding incidents per 1000 km"
+  weight       Float          // percentage; all metrics in a category should sum to 100
+  minScore     Float          @default(0)
+  maxScore     Float          @default(100)
+  displayOrder Int            @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, category, name])
+  @@index([companyId, category])
+}
+
+// ── WeeklyScore ─────────────────────────────────────────────
+// Core per-driver, per-week performance record.
+// Powers: Performance Overview trend chart, Company Rankings table,
+//         Top Company Rankings widget, driver leaderboard.
+model WeeklyScore {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  weekId String @db.ObjectId
+  week   Week   @relation(fields: [weekId], references: [id])
+
+  companyId   String  @db.ObjectId
+  company     Company @relation(fields: [companyId], references: [id])
+  companyName String  // denormalized for fast table rendering
+
+  safetyScore  Float
+  qualityScore Float
+  overallScore Float
+
+  previousSafetyScore  Float?
+  previousQualityScore Float?
+  previousOverallScore Float?
+
+  rank         Int
+  previousRank Int?
+
+  metricScores MetricScore[] // embedded snapshot of all scoring metrics for this week
+
+  totalRecordsProcessed Int? // "248 records" shown in challenge/score history
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, weekId])
+  @@index([weekId, overallScore])
+  @@index([weekId, safetyScore])
+  @@index([weekId, qualityScore])
+  @@index([companyId, weekId])
+  @@index([companyId, weekId, overallScore])
+}
+
+// ── DataUpload ──────────────────────────────────────────────
+// Excel/CSV file uploads containing driver performance data.
+// Dashboard shows "Files Uploaded: 363" → count of DataUpload.
+model DataUpload {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  companyId String  @db.ObjectId
+  company   Company @relation(fields: [companyId], references: [id])
+
+  uploadedById String? @db.ObjectId
+  uploadedBy   User?   @relation("UploadedBy", fields: [uploadedById], references: [id])
+
+  weekId String? @db.ObjectId
+  week   Week?   @relation(fields: [weekId], references: [id])
+
+  fileName         String
+  fileSizeKb       Int
+  format           String       @default("Excel")
+  status           UploadStatus @default(PROCESSING)
+  recordsProcessed Int?
+  errorMessage     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, createdAt])
+  @@index([companyId, status])
+  @@index([weekId])
+}
+
+// ── Notification ─────────────────────────────────────────────
+// User-facing notifications shown in the bell-icon notification panel.
+// Admin dashboard shows "Recent Notifications" → 3 latest unread.
+// Full list shown on the Notifications page.
+model Notification {
+  id      String           @id @default(auto()) @map("_id") @db.ObjectId
+  userId  String           @db.ObjectId
+  user    User             @relation(fields: [userId], references: [id])
+  type    NotificationType
+  title   String
+  message String           // e.g. "New company RoadFast Logistics has registered on the platform."
+  isRead  Boolean          @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+// ── Achievement ──────────────────────────────────────────────
+// "Top Performer" style badges shown on Dashboard → Recent Achievements (driver flow).
+model Achievement {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  user        User     @relation(fields: [userId], references: [id])
+  title       String   // e.g. "Top Performer"
+  description String   // e.g. "Scored in the top 3 this week"
+  earnedAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ── ActivityLog ──────────────────────────────────────────────
+// System-wide audit trail shown on Admin → Activity Logs page.
+// Every significant action (company registered, user deactivated, file uploaded, etc.)
+// is recorded here for admin visibility.
+model ActivityLog {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Who triggered this action. Null = system-generated (e.g. scheduled jobs).
+  userId      String?  @db.ObjectId
+  user        User?    @relation("TriggeredBy", fields: [userId], references: [id])
+
+  action      String   // short machine-readable label, e.g. "COMPANY_REGISTERED", "USER_DEACTIVATED"
+  description String   // human-readable, e.g. "New company RoadFast Logistics has registered on the platform."
+
+  // Optional reference to the entity this log is about
+  entityType  String?  // e.g. "Company", "User", "DataUpload"
+  entityId    String?  @db.ObjectId
+
+  ipAddress   String?  // IP of the actor if available
+
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([entityType, entityId])
+}
+
+// ── OtpToken ─────────────────────────────────────────────────
+// One-time passwords for email verification and password reset flow.
+model OtpToken {
+  id        String     @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String     @db.ObjectId
+  otp       String
+  purpose   OtpPurpose
+  used      Boolean    @default(false)
+  expiresAt DateTime
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+// ── RefreshToken ─────────────────────────────────────────────
+// Stored refresh tokens for JWT rotation. Deleted on logout or password change.
+model RefreshToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
