@@ -1,0 +1,53 @@
+// ── Company ─────────────────────────────────────────────────
+// Represents a logistics company registered on the platform.
+// Admin can view, filter (Active / Inactive / Suspended), and manage companies.
+// Shown on: Dashboard stats, Companies list, Performance Overview rankings.
+model Company {
+  id      String        @id @default(auto()) @map("_id") @db.ObjectId
+  code    String?       // display code shown in company list, e.g. "#123678"
+  name    String
+  email   String?       @unique
+  phone   String?
+  country String?       // e.g. "USA" — shown in company list & company details popup
+  location String?      // city / address (more granular than country)
+  logoUrl String?
+  status  CompanyStatus @default(ACTIVE)
+
+  // "Numbers of drivers" from the Add Company form — used as the expected/target count.
+  // Actual driver count is derived from User[] where role=DRIVER.
+  expectedDriverCount Int?
+
+  users          User[]
+  dataUploads    DataUpload[]
+  scoringMetrics ScoringMetric[]
+  weeklyScores   WeeklyScore[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([country])
+}
+
+// ── ScoringMetric ───────────────────────────────────────────
+// Admin-configurable scoring metric per company (or global template if companyId=null).
+// Shown on: Company → Scoring System → Edit Scoring System (driver/company flow).
+model ScoringMetric {
+  id           String         @id @default(auto()) @map("_id") @db.ObjectId
+  companyId    String?        @db.ObjectId
+  company      Company?       @relation(fields: [companyId], references: [id])
+  category     MetricCategory
+  name         String         // e.g. "Speeding", "Delivery Completion"
+  code         String?        // short column code, e.g. "CSF", "DPMO", "DSB", "POD"
+  description  String?        // e.g. "Speeding incidents per 1000 km"
+  weight       Float          // percentage; all metrics in a category should sum to 100
+  minScore     Float          @default(0)
+  maxScore     Float          @default(100)
+  displayOrder Int            @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, category, name])
+  @@index([companyId, category])
+}

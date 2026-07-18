@@ -1,0 +1,92 @@
+// ── Week (Competition) ───────────────────────────────────────
+// Weekly competition cycle.
+// Dashboard shows "Active Competitions: 40" → count of Week where status=ACTIVE.
+// Performance Overview shows "Active Competitions: 110".
+model Week {
+  id         String     @id @default(auto()) @map("_id") @db.ObjectId
+  weekNumber Int        @unique
+  startDate  DateTime
+  endDate    DateTime
+  status     WeekStatus @default(UPCOMING)
+
+  weeklyScores WeeklyScore[]
+  dataUploads  DataUpload[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// ── WeeklyScore ─────────────────────────────────────────────
+// Core per-driver, per-week performance record.
+// Powers: Performance Overview trend chart, Company Rankings table,
+//         Top Company Rankings widget, driver leaderboard.
+model WeeklyScore {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  weekId String @db.ObjectId
+  week   Week   @relation(fields: [weekId], references: [id])
+
+  companyId   String  @db.ObjectId
+  company     Company @relation(fields: [companyId], references: [id])
+  companyName String  // denormalized for fast table rendering
+
+  safetyScore  Float
+  qualityScore Float
+  overallScore Float
+
+  previousSafetyScore  Float?
+  previousQualityScore Float?
+  previousOverallScore Float?
+
+  rank         Int
+  previousRank Int?
+
+  metricScores MetricScore[] // embedded snapshot of all scoring metrics for this week
+
+  totalRecordsProcessed Int? // "248 records" shown in challenge/score history
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, weekId])
+  @@index([weekId, overallScore])
+  @@index([weekId, safetyScore])
+  @@index([weekId, qualityScore])
+  @@index([companyId, weekId])
+  @@index([companyId, weekId, overallScore])
+}
+
+// ── DataUpload ──────────────────────────────────────────────
+// Excel/CSV file uploads containing driver performance data.
+// Dashboard shows "Files Uploaded: 363" → count of DataUpload.
+model DataUpload {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  companyId String  @db.ObjectId
+  company   Company @relation(fields: [companyId], references: [id])
+
+  uploadedById String? @db.ObjectId
+  uploadedBy   User?   @relation("UploadedBy", fields: [uploadedById], references: [id])
+
+  weekId String? @db.ObjectId
+  week   Week?   @relation(fields: [weekId], references: [id])
+
+  fileName         String
+  fileSizeKb       Int
+  format           String       @default("Excel")
+  status           UploadStatus @default(PROCESSING)
+  recordsProcessed Int?
+  errorMessage     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, createdAt])
+  @@index([companyId, status])
+  @@index([weekId])
+}

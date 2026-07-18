@@ -1,0 +1,105 @@
+// ── User ────────────────────────────────────────────────────
+// Covers all three roles: DRIVER, COMPANY (company admin), ADMIN (platform admin).
+// Shown on: User Management list (Name, Role, Company, Email, Status),
+//           User Details popup, Settings → Profile.
+model User {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  email       String  @unique
+  password    String
+  phone       String?
+  photoUrl    String? // Settings → Profile → "Add Profile Photo"
+  associateId String? // driver-specific ID, e.g. "DRV-1024"
+
+  role            Role            @default(DRIVER)
+  status          DriverStatus    @default(ACTIVE) // driver-level status (ACTIVE / INACTIVE / ON_LEAVE)
+  overallStanding OverallStanding @default(BRONZE)
+  joinDate        DateTime        @default(now())
+
+  // Auth fields
+  isEmailVerified Boolean   @default(false)
+  isActive        Boolean   @default(true) // false = deactivated by admin ("Deactivate User" action)
+  lastLogin       DateTime?
+
+  // Company relation — null for ADMIN role
+  companyId String?  @db.ObjectId
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  // Denormalized snapshot for fast leaderboard & list rendering.
+  // Updated each time a new WeeklyScore is calculated for this user.
+  currentSafetyScore  Float?
+  currentQualityScore Float?
+  currentOverallScore Float?
+  currentRank         Int?
+  previousRank        Int?
+
+  weeklyScores     WeeklyScore[]
+  notifications    Notification[]
+  achievements     Achievement[]
+  uploadsPerformed DataUpload[]   @relation("UploadedBy")
+  activityLogs     ActivityLog[]  @relation("TriggeredBy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([role])
+  @@index([isActive])
+  @@index([companyId, status])
+  @@index([companyId, currentOverallScore])
+}
+
+// ── OtpToken ─────────────────────────────────────────────────
+// One-time passwords for email verification and password reset flow.
+model OtpToken {
+  id        String     @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String     @db.ObjectId
+  otp       String
+  purpose   OtpPurpose
+  used      Boolean    @default(false)
+  expiresAt DateTime
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+// ── RefreshToken ─────────────────────────────────────────────
+// Stored refresh tokens for JWT rotation. Deleted on logout or password change.
+model RefreshToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ── ActivityLog ──────────────────────────────────────────────
+// System-wide audit trail shown on Admin → Activity Logs page.
+// Every significant action (company registered, user deactivated, file uploaded, etc.)
+// is recorded here for admin visibility.
+model ActivityLog {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Who triggered this action. Null = system-generated (e.g. scheduled jobs).
+  userId      String?  @db.ObjectId
+  user        User?    @relation("TriggeredBy", fields: [userId], references: [id])
+
+  action      String   // short machine-readable label, e.g. "COMPANY_REGISTERED", "USER_DEACTIVATED"
+  description String   // human-readable, e.g. "New company RoadFast Logistics has registered on the platform."
+
+  // Optional reference to the entity this log is about
+  entityType  String?  // e.g. "Company", "User", "DataUpload"
+  entityId    String?  @db.ObjectId
+
+  ipAddress   String?  // IP of the actor if available
+
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([entityType, entityId])
+}

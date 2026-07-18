@@ -1,0 +1,80 @@
+// ===========================================================
+// ENUMS
+// ===========================================================
+
+// User roles: DRIVER (regular driver), COMPANY (company admin), ADMIN (platform admin)
+enum Role {
+  DRIVER
+  COMPANY
+  ADMIN
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+// Driver-level status shown on driver profile & leaderboard
+enum DriverStatus {
+  ACTIVE
+  INACTIVE
+  ON_LEAVE
+}
+
+// Company status shown in Companies list (Active / Inactive / Suspended)
+enum CompanyStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum OverallStanding {
+  PLATINUM
+  GOLD
+  SILVER
+  BRONZE
+}
+
+// Weekly competition cycle status
+enum WeekStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+}
+
+// Notification types for the Notifications panel
+enum NotificationType {
+  COMPETITION_STARTED  // a new weekly competition started
+  DATA_UPLOADED        // a file was uploaded for a company
+  ACHIEVEMENT          // driver earned a badge
+  COMPANY_REGISTERED   // new company joined the platform
+  USER_DEACTIVATED     // a user was deactivated by admin
+  SYSTEM               // generic system notification
+}
+
+enum MetricCategory {
+  SAFETY
+  QUALITY
+}
+
+enum UploadStatus {
+  PROCESSING
+  SUCCESS
+  FAILED
+}
+
+// ===========================================================
+// COMPOSITE TYPES  (embedded docs — MongoDB only)
+// ===========================================================
+
+// One entry per scoring metric, snapshotted onto a WeeklyScore at calculation time.
+// Weights/names are snapshotted so historical scores are stable even if admin edits the config later.
+type MetricScore {
+  metricId      String         @db.ObjectId
+  name          String         // denormalized, e.g. "Speeding", "Customer Feedback"
+  code          String?        // short col code on leaderboard, e.g. "CSF", "DPMO"
+  category      MetricCategory
+  score         Float          // 0–100 (or metric's configured range)
+  weight        Float          // weight % at calculation time
+  previousScore Float?
+}

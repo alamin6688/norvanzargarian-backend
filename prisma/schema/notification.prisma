@@ -1,0 +1,31 @@
+// ── Notification ─────────────────────────────────────────────
+// User-facing notifications shown in the bell-icon notification panel.
+// Admin dashboard shows "Recent Notifications" → 3 latest unread.
+// Full list shown on the Notifications page.
+model Notification {
+  id      String           @id @default(auto()) @map("_id") @db.ObjectId
+  userId  String           @db.ObjectId
+  user    User             @relation(fields: [userId], references: [id])
+  type    NotificationType
+  title   String
+  message String           // e.g. "New company RoadFast Logistics has registered on the platform."
+  isRead  Boolean          @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+// ── Achievement ──────────────────────────────────────────────
+// "Top Performer" style badges shown on Dashboard → Recent Achievements (driver flow).
+model Achievement {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  user        User     @relation(fields: [userId], references: [id])
+  title       String   // e.g. "Top Performer"
+  description String   // e.g. "Scored in the top 3 this week"
+  earnedAt    DateTime @default(now())
+
+  @@index([userId])
+}
