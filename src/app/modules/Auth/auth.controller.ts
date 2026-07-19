@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import httpStatus from "http-status";
+import config from "../../../config";
 import catchAsync from "../../../shared/catchAsync";
 import sendResponse from "../../../shared/sendResponse";
 import { AuthService } from "./auth.service";
@@ -16,6 +17,19 @@ const register = catchAsync(async (req: Request, res: Response) => {
 
 const login = catchAsync(async (req: Request, res: Response) => {
   const result = await AuthService.login(req.body);
+
+  res.cookie("accessToken", result.accessToken, {
+    httpOnly: true,
+    secure: config.env === "production",
+    sameSite: "strict",
+  });
+
+  res.cookie("refreshToken", result.refreshToken, {
+    httpOnly: true,
+    secure: config.env === "production",
+    sameSite: "strict",
+  });
+
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
@@ -25,7 +39,23 @@ const login = catchAsync(async (req: Request, res: Response) => {
 });
 
 const refreshToken = catchAsync(async (req: Request, res: Response) => {
-  const result = await AuthService.refreshAccessToken(req.body);
+  const tokenPayload = {
+    refreshToken: req.body.refreshToken || req.cookies?.refreshToken || "",
+  };
+  const result = await AuthService.refreshAccessToken(tokenPayload);
+
+  res.cookie("accessToken", result.accessToken, {
+    httpOnly: true,
+    secure: config.env === "production",
+    sameSite: "strict",
+  });
+
+  res.cookie("refreshToken", result.refreshToken, {
+    httpOnly: true,
+    secure: config.env === "production",
+    sameSite: "strict",
+  });
+
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
@@ -35,9 +65,13 @@ const refreshToken = catchAsync(async (req: Request, res: Response) => {
 });
 
 const logout = catchAsync(async (req: Request, res: Response) => {
-  const accessToken = req.headers.authorization?.split(" ")[1] ?? "";
-  const { refreshToken } = req.body as { refreshToken?: string };
+  const accessToken = req.headers.authorization?.split(" ")[1] ?? req.cookies?.accessToken ?? "";
+  const refreshToken = req.body.refreshToken || req.cookies?.refreshToken || "";
   await AuthService.logout(accessToken, refreshToken);
+
+  res.clearCookie("accessToken");
+  res.clearCookie("refreshToken");
+
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
@@ -47,12 +81,27 @@ const logout = catchAsync(async (req: Request, res: Response) => {
 });
 
 const verifyEmail = catchAsync(async (req: Request, res: Response) => {
-  await AuthService.verifyEmail(req.body);
+  const result = await AuthService.verifyEmail(req.body);
+
+  if (result) {
+    res.cookie("accessToken", result.accessToken, {
+      httpOnly: true,
+      secure: config.env === "production",
+      sameSite: "strict",
+    });
+
+    res.cookie("refreshToken", result.refreshToken, {
+      httpOnly: true,
+      secure: config.env === "production",
+      sameSite: "strict",
+    });
+  }
+
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
     message: "Email verified successfully.",
-    data: null,
+    data: result,
   });
 });
 

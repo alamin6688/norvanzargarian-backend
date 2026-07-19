@@ -2,6 +2,8 @@ export interface IUser {
   email: string;
   password: string;
   name: string;
+  companyName: string;
+  companyCode: string;
 }
 
 export interface ILoginInput {
@@ -34,7 +36,7 @@ export interface IVerifyEmailInput {
 
 export interface IResendOtpInput {
   email: string;
-  purpose: "EMAIL_VERIFICATION" | "PASSWORD_RESET";
+  purpose?: "EMAIL_VERIFICATION" | "PASSWORD_RESET";
 }
 
 export interface IChangePasswordInput {

@@ -10,16 +10,21 @@ import { jwtHelpers } from "../../utils/jwtHelpers";
 const auth = (...roles: string[]) => {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const authHeader = req.headers.authorization;
+      let token: string | undefined = undefined;
 
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        throw new ApiError(httpStatus.UNAUTHORIZED, "No token provided. Please log in.");
+      // 1. Check Authorization header
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        token = authHeader.split(" ")[1];
       }
 
-      const token = authHeader.split(" ")[1];
+      // 2. Check cookies
+      if (!token && req.cookies) {
+        token = req.cookies.accessToken || req.cookies.token;
+      }
 
       if (!token) {
-        throw new ApiError(httpStatus.UNAUTHORIZED, "Invalid token format.");
+        throw new ApiError(httpStatus.UNAUTHORIZED, "No token provided. Please log in.");
       }
 
       // Check if token is blacklisted (logged out)

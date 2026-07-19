@@ -2,6 +2,7 @@
 import { Server } from "http";
 import app from "./app";
 import config from "./config";
+import { seedDefaultAdmin } from "./app/db/adminSeed";
 import prisma from "./lib/prisma";
 import redis from "./lib/redisConnection";
 import logger from "./utils/logger/logger";
@@ -13,6 +14,9 @@ async function main() {
     // 1. Connect to database
     await prisma.$connect();
     logger.info("🛢️  Database connected successfully");
+
+    // Seed default admin
+    await seedDefaultAdmin();
 
     // 2. Connect to Redis
     try {

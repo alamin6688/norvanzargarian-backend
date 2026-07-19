@@ -5,6 +5,8 @@ const createUserZodSchema = z.object({
     name: z.string().min(1, "Name is required"),
     email: z.string().min(1, "Email is required").email("Invalid email address"),
     password: z.string().min(6, "Password must be at least 6 characters long"),
+    companyName: z.string().min(1, "Company name is required"),
+    companyCode: z.string().min(1, "Company code is required"),
   }),
 });
 
@@ -51,7 +53,7 @@ const verifyEmailZodSchema = z.object({
 const resendOtpZodSchema = z.object({
   body: z.object({
     email: z.string().min(1, "Email is required").email("Invalid email address"),
-    purpose: z.enum(["EMAIL_VERIFICATION", "PASSWORD_RESET"]),
+    purpose: z.enum(["EMAIL_VERIFICATION", "PASSWORD_RESET"]).optional(),
   }),
 });
 

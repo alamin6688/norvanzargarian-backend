@@ -1,4 +1,4 @@
-import { OtpPurpose } from "@prisma/client";
+import { OtpPurpose, Role } from "@prisma/client";
 import httpStatus from "http-status";
 import config from "../../../config";
 import ApiError from "../../../errors/apiError";
@@ -69,21 +69,48 @@ const register = async (userData: IUser) => {
     throw new ApiError(httpStatus.CONFLICT, "Email is already registered.");
   }
 
+  if (userData.companyCode) {
+    const existingCompany = await prisma.company.findFirst({
+      where: { code: userData.companyCode },
+    });
+    if (existingCompany) {
+      throw new ApiError(httpStatus.CONFLICT, "Company code is already registered.");
+    }
+  }
+
   const hashedPassword = await hashItem(userData.password);
 
-  const user = await prisma.user.create({
-    data: {
-      email: userData.email,
-      name: userData.name,
-      password: hashedPassword,
-    },
-    select: { id: true, name: true, email: true, role: true, isEmailVerified: true },
+  // Run database transaction to create both company and company admin user
+  const result = await prisma.$transaction(async (tx) => {
+    const company = await tx.company.create({
+      data: {
+        name: userData.companyName,
+        code: userData.companyCode,
+        email: userData.email,
+        status: "ACTIVE",
+      },
+    });
+
+    const user = await tx.user.create({
+      data: {
+        email: userData.email,
+        name: userData.name,
+        password: hashedPassword,
+        role: Role.COMPANY,
+        companyId: company.id,
+        isEmailVerified: false,
+        isActive: true,
+      },
+      select: { id: true, name: true, email: true, role: true, isEmailVerified: true },
+    });
+
+    return user;
   });
 
   // Send verification OTP
-  await createAndSendOtp(user.email, OtpPurpose.EMAIL_VERIFICATION, user.id);
+  await createAndSendOtp(result.email, OtpPurpose.EMAIL_VERIFICATION, result.id);
 
-  return user;
+  return result;
 };
 
 const login = async (loginData: ILoginInput) => {
@@ -227,6 +254,28 @@ const verifyEmail = async ({ email, otp }: IVerifyEmailInput) => {
       data: { used: true },
     }),
   ]);
+
+  const payload: ITokenPayload = {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+  };
+
+  const { accessToken, refreshToken } = jwtHelpers.generateAuthTokens(payload);
+
+  await saveRefreshToken(user.id, refreshToken);
+
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isEmailVerified: true,
+    },
+  };
 };
 
 const resendOtp = async ({ email, purpose }: IResendOtpInput) => {
@@ -235,11 +284,36 @@ const resendOtp = async ({ email, purpose }: IResendOtpInput) => {
     throw new ApiError(httpStatus.NOT_FOUND, "User not found.");
   }
 
-  if (purpose === "EMAIL_VERIFICATION" && user.isEmailVerified) {
+  let determinedPurpose: OtpPurpose;
+
+  if (purpose) {
+    determinedPurpose = purpose as OtpPurpose;
+  } else {
+    // Dynamically check if there is an active (unused & unexpired) OTP in database
+    const activeOtp = await prisma.otpToken.findFirst({
+      where: {
+        userId: user.id,
+        used: false,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (activeOtp) {
+      determinedPurpose = activeOtp.purpose;
+    } else {
+      // Fallback: If no active OTP token is found, determine based on user verification status
+      determinedPurpose = user.isEmailVerified
+        ? OtpPurpose.PASSWORD_RESET
+        : OtpPurpose.EMAIL_VERIFICATION;
+    }
+  }
+
+  if (determinedPurpose === OtpPurpose.EMAIL_VERIFICATION && user.isEmailVerified) {
     throw new ApiError(httpStatus.BAD_REQUEST, "Email is already verified.");
   }
 
-  await createAndSendOtp(email, purpose as OtpPurpose, user.id);
+  await createAndSendOtp(email, determinedPurpose, user.id);
 };
 
 const forgotPassword = async ({ email }: IForgotPasswordInput) => {

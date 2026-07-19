@@ -47,6 +47,12 @@ const config = {
     max: Number(process.env.RATE_LIMIT_MAX) || 100,
     authMax: Number(process.env.RATE_LIMIT_AUTH_MAX) || 10,
   },
+  admin: {
+    email: process.env.DEFAULT_ADMIN_EMAIL || "admin@accusum.ai",
+    password: process.env.DEFAULT_ADMIN_PASSWORD || "Admin@123",
+    name: process.env.DEFAULT_ADMIN_NAME || "Admin User",
+    companyName: process.env.DEFAULT_ADMIN_COMPANY_NAME || "ACCUSUM",
+  },
 };
 
 export default config;
